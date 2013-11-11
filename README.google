@@ -1,0 +1,20 @@
+URL:https://github.com/golang/glog/archive/c6f9652c7179652e2fd8ed7002330db089f4c9db.zip
+Version: 
+License: Apache 2.0
+License File: LICENSE
+
+Description:
+  Low level implementation of leveled execution logs for Go.
+
+It is a fork of the github.com/golang/glog package that is itself an efficient
+pure Go implementation of leveled logs in the manner of the open source C++
+package
+	http://code.google.com/p/google-glog
+
+This version refactors the code so as not to rely on a single global variable
+and associated log state. It als separates out the flag parsing so that
+an application can chose to use whatever command line flags they wish to
+configure the package.
+
+Local Modifications:
+No modifications.
