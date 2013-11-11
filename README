@@ -9,6 +9,7 @@ package
 	http://code.google.com/p/google-glog
 
 This version refactors the code so as not to rely on a single global variable
-and associated log state. It als separates out the flag parsing so that
+and associated log state. It also separates out the flag parsing so that
 an application can chose to use whatever command line flags they wish to
 configure the package.
+
