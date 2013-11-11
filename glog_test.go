@@ -53,7 +53,7 @@ func (f *flushBuffer) Sync() error {
 }
 
 // swap sets the log writers and returns the old array.
-func (l *T) swap(writers [numSeverity]flushSyncWriter) (old [numSeverity]flushSyncWriter) {
+func (l *Log) swap(writers [numSeverity]flushSyncWriter) (old [numSeverity]flushSyncWriter) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	old = l.file
@@ -64,21 +64,21 @@ func (l *T) swap(writers [numSeverity]flushSyncWriter) (old [numSeverity]flushSy
 }
 
 // newBuffers sets the log writers to all new byte buffers and returns the old array.
-func (l *T) newBuffers() [numSeverity]flushSyncWriter {
+func (l *Log) newBuffers() [numSeverity]flushSyncWriter {
 	return l.swap([numSeverity]flushSyncWriter{new(flushBuffer), new(flushBuffer), new(flushBuffer), new(flushBuffer)})
 }
 
 // contents returns the specified log value as a string.
-func (l *T) contents(s Severity) string {
+func (l *Log) contents(s Severity) string {
 	return l.file[s].(*flushBuffer).String()
 }
 
 // contains reports whether the string is contained in the log.
-func (l *T) contains(s Severity, str string, t *testing.T) bool {
+func (l *Log) contains(s Severity, str string, t *testing.T) bool {
 	return strings.Contains(l.contents(s), str)
 }
 
-func newLogger(t *testing.T) *T {
+func newLogger(t *testing.T) *Log {
 	l := NewLogger("test")
 	l.depth = 2
 	l.newBuffers()

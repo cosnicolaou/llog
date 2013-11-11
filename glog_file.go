@@ -85,7 +85,7 @@ func logName(logger, tag string, t time.Time) (name, link string) {
 // contains tag ("INFO", "FATAL", etc.) and t.  If the file is created
 // successfully, create also attempts to update the symlink for that tag, ignoring
 // errors.
-func (l *T) create(tag string, t time.Time) (f *os.File, filename string, err error) {
+func (l *Log) create(tag string, t time.Time) (f *os.File, filename string, err error) {
 	if len(l.logDirs) == 0 {
 		return nil, "", errors.New("log: no log dirs")
 	}
