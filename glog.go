@@ -59,6 +59,10 @@
 //	SetStderrThreshold(level)
 //		Log events at or above this severity are logged to standard
 //		error as well as to files.
+//	SetMaxStackBufSize(size)
+//		Set the max size (bytes) of the byte buffer to use for stack
+//		traces.	The default max is 4096K; use powers of 2 since the
+//		stack size will be grown exponentially until it exceeds the max.
 //
 //	Other controls provide aids to debugging.
 //
@@ -430,6 +434,9 @@ type Log struct {
 	// Depth to use when invoking runtime.Callers. For now, this isn't
 	// configurable outside of unittests.
 	depth int
+
+	// max size of buffer to use for stacks.
+	maxStackBufSize int
 }
 
 // NewLogger creates a new logger.
@@ -440,6 +447,7 @@ func NewLogger(name string) *Log {
 	logging := &Log{}
 	logging.setVState(0, nil, false)
 	logging.depth = 3
+	logging.maxStackBufSize = 4096 * 1024
 	logging.name = name
 
 	// Default stderrThreshold is ERROR.
@@ -507,6 +515,12 @@ func (l *Log) SetTraceLocation(location TraceLocation) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.traceLocation = location
+}
+
+func (l *Log) SetMaxStackBufSize(max int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.maxStackBufSize = max
 }
 
 // buffer holds a byte Buffer for reuse. The zero value is ready for use.
@@ -697,7 +711,7 @@ func (l *Log) output(s Severity, buf *buffer) {
 	if l.traceLocation.isSet() {
 		_, file, line, ok := runtime.Caller(l.depth) // It's always the same number of frames to the user's call (same as header).
 		if ok && l.traceLocation.match(file, line) {
-			buf.Write(stacks(false))
+			buf.Write(stacks(false, l.maxStackBufSize))
 		}
 	}
 	data := buf.Bytes()
@@ -730,10 +744,10 @@ func (l *Log) output(s Severity, buf *buffer) {
 	if s == FatalLog {
 		// Make sure we see the trace for the current goroutine on standard error.
 		if !l.toStderr {
-			os.Stderr.Write(stacks(false))
+			os.Stderr.Write(stacks(false, l.maxStackBufSize))
 		}
 		// Write the stack trace for all goroutines to the files.
-		trace := stacks(true)
+		trace := stacks(true, l.maxStackBufSize)
 		logExitFunc = func(error) {} // If we get a write error, we'll still exit below.
 		for log := FatalLog; log >= InfoLog; log-- {
 			if f := l.file[log]; f != nil { // Can be nil if -logtostderr is set.
@@ -770,14 +784,11 @@ func timeoutFlush(l *Log, timeout time.Duration) {
 }
 
 // stacks is a wrapper for runtime.Stack that attempts to recover the data for all goroutines.
-func stacks(all bool) []byte {
+func stacks(all bool, max int) []byte {
 	// We don't know how big the traces are, so grow a few times if they don't fit. Start large, though.
-	n := 10000
-	if all {
-		n = 100000
-	}
+	n := 128 * 1024
 	var trace []byte
-	for i := 0; i < 5; i++ {
+	for n <= max {
 		trace = make([]byte, n)
 		nbytes := runtime.Stack(trace, all)
 		if nbytes < len(trace) {
