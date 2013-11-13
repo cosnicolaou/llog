@@ -61,8 +61,10 @@
 //		error as well as to files.
 //	SetMaxStackBufSize(size)
 //		Set the max size (bytes) of the byte buffer to use for stack
-//		traces.	The default max is 4096K; use powers of 2 since the
+//		traces. The default max is 4096K; use powers of 2 since the
 //		stack size will be grown exponentially until it exceeds the max.
+//              A min of 128K is enforced and any attempts to reduce this will
+//              be silently ignored.
 //
 //	Other controls provide aids to debugging.
 //
@@ -112,6 +114,8 @@ const (
 	ErrorLog
 	FatalLog
 	numSeverity = 4
+
+	initialMaxStackBufSize = 128 * 1024
 )
 
 const severityChar = "IWEF"
@@ -255,7 +259,6 @@ func (m *modulePat) match(file string) bool {
 }
 
 func (m *ModuleSpec) String() string {
-	// Lock because the type is not atomic. TODO: clean this up.
 	var b bytes.Buffer
 	for i, f := range m.filter {
 		if i > 0 {
@@ -463,6 +466,11 @@ func NewLogger(name string) *Log {
 	return logging
 }
 
+func (l *Log) String() string {
+	return fmt.Sprintf("name=%s logdirs=%s logtostderr=%t alsologtostderr=%t max_stack_buf_size=%d v=%d stderrthreshold=%s vmodule=%s log_backtrace_at=%s",
+		l.name, l.logDirs, l.toStderr, l.alsoToStderr, l.maxStackBufSize, l.verbosity, &l.stderrThreshold, &l.vmodule, &l.traceLocation)
+}
+
 // logDir if non-empty, write log files to this directory.
 func (l *Log) SetLogDir(logDir string) {
 	if logDir != "" {
@@ -520,7 +528,9 @@ func (l *Log) SetTraceLocation(location TraceLocation) {
 func (l *Log) SetMaxStackBufSize(max int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.maxStackBufSize = max
+	if max > initialMaxStackBufSize {
+		l.maxStackBufSize = max
+	}
 }
 
 // buffer holds a byte Buffer for reuse. The zero value is ready for use.
@@ -786,7 +796,7 @@ func timeoutFlush(l *Log, timeout time.Duration) {
 // stacks is a wrapper for runtime.Stack that attempts to recover the data for all goroutines.
 func stacks(all bool, max int) []byte {
 	// We don't know how big the traces are, so grow a few times if they don't fit. Start large, though.
-	n := 128 * 1024
+	n := initialMaxStackBufSize
 	var trace []byte
 	for n <= max {
 		trace = make([]byte, n)
