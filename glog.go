@@ -498,9 +498,7 @@ func (l *Log) SetAlsoLogToStderr(f bool) {
 
 // SetV sets the log level for V logs
 func (l *Log) SetV(v Level) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.verbosity = v
+	l.verbosity.set(v)
 }
 
 // SetStderrThreshold sets the threshold for which logs at or above which go to stderr
@@ -546,7 +544,7 @@ func (l *Log) setVState(verbosity Level, filter []modulePat, setFilter bool) {
 	// Turn verbosity off so V will not fire while we are in transition.
 	l.verbosity.set(0)
 	// Ditto for filter length.
-	l.filterLength = 0
+	atomic.StoreInt32(&l.filterLength, 0)
 
 	// Set the new filters and wipe the pc->Level map if the filter has changed.
 	if setFilter {
