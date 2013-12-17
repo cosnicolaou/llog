@@ -503,8 +503,6 @@ func (l *Log) SetV(v Level) {
 
 // SetStderrThreshold sets the threshold for which logs at or above which go to stderr
 func (l *Log) SetStderrThreshold(s Severity) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	l.stderrThreshold.set(s)
 }
 
