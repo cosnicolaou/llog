@@ -476,7 +476,7 @@ func (l *Log) SetLogDir(logDir string) {
 	if logDir != "" {
 		l.mu.Lock()
 		defer l.mu.Unlock()
-		l.logDirs = append(l.logDirs, logDir)
+		l.logDirs = append([]string{logDir}, l.logDirs...)
 	}
 }
 
