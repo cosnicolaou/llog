@@ -434,9 +434,9 @@ type Log struct {
 	stats         Stats
 	severityStats [numSeverity]*OutputStats
 
-	// Depth to use when invoking runtime.Callers. For now, this isn't
-	// configurable outside of unittests.
-	depth int
+	// number of stack frame to skip in order to reach the callpoint
+	// to be logged. skip is calculated as per runtime.Caller.
+	skip int
 
 	// max size of buffer to use for stacks.
 	maxStackBufSize int
@@ -446,10 +446,13 @@ type Log struct {
 // name is a non-empty string that appears in the names of log files
 // to distinguish between separate instances of the logger writing to the
 // same directory.
-func NewLogger(name string) *Log {
+// skip is the number of stack frames to skip in order to reach the
+// call point to be logged. 0 will log the caller of the logging methods,
+// 1 their caller etc.
+func NewLogger(name string, skip int) *Log {
 	logging := &Log{}
 	logging.setVState(0, nil, false)
-	logging.depth = 3
+	logging.skip = 2 + skip
 	logging.maxStackBufSize = 4096 * 1024
 	logging.name = name
 
@@ -606,7 +609,7 @@ where the fields are defined as follows:
 func (l *Log) header(s Severity) *buffer {
 	// Lmmdd hh:mm:ss.uuuuuu threadid file:line]
 	now := timeNow()
-	_, file, line, ok := runtime.Caller(l.depth) // It's always the same number of frames to the user's call.
+	_, file, line, ok := runtime.Caller(l.skip) // It's always the same number of frames to the user's call.
 	if !ok {
 		file = "???"
 		line = 1
@@ -715,7 +718,7 @@ func (l *Log) Printf(s Severity, format string, args ...interface{}) {
 func (l *Log) output(s Severity, buf *buffer) {
 	l.mu.Lock()
 	if l.traceLocation.isSet() {
-		_, file, line, ok := runtime.Caller(l.depth) // It's always the same number of frames to the user's call (same as header).
+		_, file, line, ok := runtime.Caller(l.skip) // It's always the same number of frames to the user's call (same as header).
 		if ok && l.traceLocation.match(file, line) {
 			buf.Write(stacks(false, l.maxStackBufSize))
 		}
@@ -995,7 +998,12 @@ func (l *Log) V(level Level) bool {
 		// but if V logging is enabled we're slow anyway.
 		l.mu.Lock()
 		defer l.mu.Unlock()
-		if runtime.Callers(2, l.pcs[:]) == 0 {
+		// Note that runtime.Callers counts skip differently to
+		// runtime.Caller - i.e. it is one greater than the skip
+		// value for .Caller to reach the same stack frame. So, even though
+		// we are one level closer to the caller here, we will still use the
+		// same value as for runtime.Caller!
+		if runtime.Callers(l.skip, l.pcs[:]) == 0 {
 			return false
 		}
 		v, ok := l.vmap[l.pcs[0]]

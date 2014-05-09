@@ -79,8 +79,7 @@ func (l *Log) contains(s Severity, str string, t *testing.T) bool {
 }
 
 func newLogger(t *testing.T) *Log {
-	l := NewLogger("test")
-	l.depth = 2
+	l := NewLogger("test", 0)
 	l.newBuffers()
 	return l
 }
@@ -343,4 +342,10 @@ func BenchmarkHeader(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		l.putBuffer(l.header(InfoLog))
 	}
+}
+
+func TestHeader1(t *testing.T) {
+	l := newLogger(t)
+	l.Print(InfoLog, "hello")
+	fmt.Println(l.contents(InfoLog))
 }
