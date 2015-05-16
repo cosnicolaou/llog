@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -104,18 +105,69 @@ func TestInfo(t *testing.T) {
 	}
 }
 
+func TestInfoDepth(t *testing.T) {
+	l := newLogger(t)
+
+	f := func() { l.PrintDepth(InfoLog, 1, "depth-test1") }
+
+	// The next three lines must stay together
+	_, _, wantLine, _ := runtime.Caller(0)
+	l.PrintDepth(InfoLog, 0, "depth-test0")
+	f()
+
+	msgs := strings.Split(strings.TrimSuffix(l.contents(InfoLog), "\n"), "\n")
+	if len(msgs) != 2 {
+		t.Fatalf("Got %d lines, expected 2", len(msgs))
+	}
+
+	for i, m := range msgs {
+		if !strings.HasPrefix(m, "I") {
+			t.Errorf("InfoDepth[%d] has wrong character: %q", i, m)
+		}
+		w := fmt.Sprintf("depth-test%d", i)
+		if !strings.Contains(m, w) {
+			t.Errorf("InfoDepth[%d] missing %q: %q", i, w, m)
+		}
+
+		// pull out the line number (between : and ])
+		msg := m[strings.LastIndex(m, ":")+1:]
+		x := strings.Index(msg, "]")
+		if x < 0 {
+			t.Errorf("InfoDepth[%d]: missing ']': %q", i, m)
+			continue
+		}
+		line, err := strconv.Atoi(msg[:x])
+		if err != nil {
+			t.Errorf("InfoDepth[%d]: bad line number: %q", i, m)
+			continue
+		}
+		wantLine++
+		if wantLine != line {
+			t.Errorf("InfoDepth[%d]: got line %d, want %d", i, line, wantLine)
+		}
+	}
+}
+
 // Test that the header has the correct format.
 func TestHeader(t *testing.T) {
 	l := newLogger(t)
 	defer func(previous func() time.Time) { timeNow = previous }(timeNow)
 	timeNow = func() time.Time {
-		return time.Date(2006, 1, 2, 15, 4, 5, .678901e9, time.Local)
+		return time.Date(2006, 1, 2, 15, 4, 5, .067890e9, time.Local)
 	}
+	pid = 1234
 	l.Print(InfoLog, "test")
-	var line, pid int
-	n, err := fmt.Sscanf(l.contents(InfoLog), "I0102 15:04:05.678901 %d glog_test.go:%d] test\n", &pid, &line)
-	if n != 2 || err != nil {
+	var line int
+	format := "I0102 15:04:05.067890    1234 glog_test.go:%d] test\n"
+	n, err := fmt.Sscanf(l.contents(InfoLog), format, &line)
+	if n != 1 || err != nil {
 		t.Errorf("log format error: %d elements, error %s:\n%s", n, err, l.contents(InfoLog))
+	}
+	// Scanf treats multiple spaces as equivalent to a single space,
+	// so check for correct space-padding also.
+	want := fmt.Sprintf(format, line)
+	if l.contents(InfoLog) != want {
+		t.Errorf("log format error: got:\n\t%q\nwant:\t%q", l.contents(InfoLog), want)
 	}
 }
 
@@ -340,7 +392,8 @@ func TestLogBacktraceAt(t *testing.T) {
 func BenchmarkHeader(b *testing.B) {
 	l := newLogger(nil)
 	for i := 0; i < b.N; i++ {
-		l.putBuffer(l.header(InfoLog))
+		buf, _, _ := l.header(InfoLog, 0)
+		l.putBuffer(buf)
 	}
 }
 

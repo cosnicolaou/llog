@@ -96,8 +96,8 @@ func (l *Log) create(tag string, t time.Time) (f *os.File, filename string, err 
 		f, err := os.Create(fname)
 		if err == nil {
 			symlink := filepath.Join(dir, link)
-			os.Remove(symlink)         // ignore err
-			os.Symlink(fname, symlink) // ignore err
+			os.Remove(symlink)        // ignore err
+			os.Symlink(name, symlink) // ignore err
 			return f, fname, nil
 		}
 		lastErr = err

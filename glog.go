@@ -46,6 +46,7 @@
 //
 // By default, all log statements write to files in a temporary directory.
 // This package provides several methods that modify this behavior.
+// These methods must be called before any logging is done.
 //
 //	NewLogger(name)
 //
@@ -593,6 +594,7 @@ var timeNow = time.Now // Stubbed out for testing.
 /*
 header formats a log header as defined by the C++ implementation.
 It returns a buffer containing the formatted header.
+The depth specifies how many stack frames above lives the source line to be identified in the log message.
 
 Log lines have this form:
 	Lmmdd hh:mm:ss.uuuuuu threadid file:line] msg...
@@ -606,10 +608,10 @@ where the fields are defined as follows:
 	line             The line number
 	msg              The user-supplied message
 */
-func (l *Log) header(s Severity) *buffer {
+func (l *Log) header(s Severity, depth int) (*buffer, string, int) {
 	// Lmmdd hh:mm:ss.uuuuuu threadid file:line]
 	now := timeNow()
-	_, file, line, ok := runtime.Caller(l.skip) // It's always the same number of frames to the user's call.
+	_, file, line, ok := runtime.Caller(l.skip + depth)
 	if !ok {
 		file = "???"
 		line = 1
@@ -641,18 +643,18 @@ func (l *Log) header(s Severity) *buffer {
 	buf.tmp[11] = ':'
 	buf.twoDigits(12, second)
 	buf.tmp[14] = '.'
-	buf.nDigits(6, 15, now.Nanosecond()/1000)
+	buf.nDigits(6, 15, now.Nanosecond()/1000, '0')
 	buf.tmp[21] = ' '
-	buf.nDigits(5, 22, pid) // TODO: should be TID
-	buf.tmp[27] = ' '
-	buf.Write(buf.tmp[:28])
+	buf.nDigits(7, 22, pid, ' ') // TODO: should be TID
+	buf.tmp[29] = ' '
+	buf.Write(buf.tmp[:30])
 	buf.WriteString(file)
 	buf.tmp[0] = ':'
 	n := buf.someDigits(1, line)
 	buf.tmp[n+1] = ']'
 	buf.tmp[n+2] = ' '
 	buf.Write(buf.tmp[:n+3])
-	return buf
+	return buf, file, line
 }
 
 // Some custom tiny helper functions to print the log header efficiently.
@@ -666,11 +668,17 @@ func (buf *buffer) twoDigits(i, d int) {
 	buf.tmp[i] = digits[d%10]
 }
 
-// nDigits formats a zero-prefixed n-digit integer at buf.tmp[i].
-func (buf *buffer) nDigits(n, i, d int) {
-	for j := n - 1; j >= 0; j-- {
+// nDigits formats an n-digit integer at buf.tmp[i],
+// padding with pad on the left.
+// It assumes d >= 0.
+func (buf *buffer) nDigits(n, i, d int, pad byte) {
+	j := n - 1
+	for ; j >= 0 && d > 0; j-- {
 		buf.tmp[i+j] = digits[d%10]
 		d /= 10
+	}
+	for ; j >= 0; j-- {
+		buf.tmp[i+j] = pad
 	}
 }
 
@@ -691,35 +699,46 @@ func (buf *buffer) someDigits(i, d int) int {
 }
 
 func (l *Log) Println(s Severity, args ...interface{}) {
-	buf := l.header(s)
-	fmt.Fprintln(buf, args...)
-	l.output(s, buf)
+	l.PrintlnDepth(s, 1, args...)
 }
 
 func (l *Log) Print(s Severity, args ...interface{}) {
-	buf := l.header(s)
+	l.PrintDepth(s, 1, args...)
+}
+
+func (l *Log) Printf(s Severity, format string, args ...interface{}) {
+	l.PrintfDepth(s, 1, format, args...)
+}
+
+func (l *Log) PrintlnDepth(s Severity, depth int, args ...interface{}) {
+	buf, file, line := l.header(s, depth)
+	fmt.Fprintln(buf, args...)
+	l.output(s, buf, file, line)
+}
+
+func (l *Log) PrintDepth(s Severity, depth int, args ...interface{}) {
+	buf, file, line := l.header(s, depth)
 	fmt.Fprint(buf, args...)
 	if buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
 	}
-	l.output(s, buf)
+	l.output(s, buf, file, line)
 }
 
-func (l *Log) Printf(s Severity, format string, args ...interface{}) {
-	buf := l.header(s)
+func (l *Log) PrintfDepth(s Severity, depth int, format string, args ...interface{}) {
+	buf, file, line := l.header(s, depth)
 	fmt.Fprintf(buf, format, args...)
 	if buf.Bytes()[buf.Len()-1] != '\n' {
 		buf.WriteByte('\n')
 	}
-	l.output(s, buf)
+	l.output(s, buf, file, line)
 }
 
 // output writes the data to the log files and releases the buffer.
-func (l *Log) output(s Severity, buf *buffer) {
+func (l *Log) output(s Severity, buf *buffer, file string, line int) {
 	l.mu.Lock()
 	if l.traceLocation.isSet() {
-		_, file, line, ok := runtime.Caller(l.skip) // It's always the same number of frames to the user's call (same as header).
-		if ok && l.traceLocation.match(file, line) {
+		if l.traceLocation.match(file, line) {
 			buf.Write(stacks(false, l.maxStackBufSize))
 		}
 	}
