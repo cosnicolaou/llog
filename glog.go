@@ -84,6 +84,10 @@
 //		"glob" pattern and N is a V level. For instance,
 //			-gopher*=3
 //		sets the V level to 3 in all Go files whose names begin "gopher".
+// SetVFilepath(regexp)
+//      The syntax of the argument is as per VModule, expect that regular
+//      expressions on the entire file path path are used instead of glob
+//      patterns on the file name component as SetVModule.
 //
 package llog
 
@@ -95,6 +99,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -259,6 +264,47 @@ func (m *modulePat) match(file string) bool {
 	return match
 }
 
+// FilepathSpec represents the setting of the -vfilepath flag.
+type FilepathSpec struct {
+	filter []filepathPat
+}
+
+// filepathPat contains a filter for the -vfilepath flags.
+type filepathPat struct {
+	regexp  *regexp.Regexp
+	pattern string
+	level   Level
+}
+
+// match reports whether the file path matches the regexp.
+func (f *filepathPat) match(path string) bool {
+	return f.regexp.MatchString(path)
+}
+
+func parseFilter(pat string) (string, int, error) {
+	if len(pat) == 0 {
+		// Empty strings such as from a trailing comma can be ignored.
+		return "", 0, nil
+	}
+	patLev := strings.Split(pat, "=")
+	if len(patLev) != 2 || len(patLev[0]) == 0 || len(patLev[1]) == 0 {
+		return "", 0, errVmoduleSyntax
+	}
+	pattern := patLev[0]
+	v, err := strconv.Atoi(patLev[1])
+	if err != nil {
+		return "", 0, errors.New("syntax error: expect comma-separated list of filename=N")
+	}
+	if v < 0 {
+		return "", 0, errors.New("negative value for vmodule level")
+	}
+	if v == 0 {
+		// Ignore. It's harmless but no point in paying the overhead.
+		return "", 0, nil
+	}
+	return pattern, v, nil
+}
+
 func (m *ModuleSpec) String() string {
 	var b bytes.Buffer
 	for i, f := range m.filter {
@@ -282,35 +328,65 @@ var errVmoduleSyntax = errors.New("syntax error: expect comma-separated list of 
 func (m *ModuleSpec) Set(value string) error {
 	var filter []modulePat
 	for _, pat := range strings.Split(value, ",") {
-		if len(pat) == 0 {
-			// Empty strings such as from a trailing comma can be ignored.
-			continue
-		}
-		patLev := strings.Split(pat, "=")
-		if len(patLev) != 2 || len(patLev[0]) == 0 || len(patLev[1]) == 0 {
-			return errVmoduleSyntax
-		}
-		pattern := patLev[0]
-		v, err := strconv.Atoi(patLev[1])
+		pattern, v, err := parseFilter(pat)
 		if err != nil {
-			return errors.New("syntax error: expect comma-separated list of filename=N")
-		}
-		if v < 0 {
-			return errors.New("negative value for vmodule level")
+			return err
 		}
 		if v == 0 {
-			continue // Ignore. It's harmless but no point in paying the overhead.
+			continue
 		}
 		// TODO: check syntax of filter?
-		filter = append(filter, modulePat{pattern, isLiteral(pattern), Level(v)})
+		filter = append(filter, modulePat{pattern, isLiteralGlob(pattern), Level(v)})
 	}
 	m.filter = filter
 	return nil
 }
 
-// isLiteral reports whether the pattern is a literal string, that is, has no metacharacters
-// that require filepath.Match to be called to match the pattern.
-func isLiteral(pattern string) bool {
+func (fp *FilepathSpec) String() string {
+	var b bytes.Buffer
+	for i, f := range fp.filter {
+		if i > 0 {
+			b.WriteRune(',')
+		}
+		fmt.Fprintf(&b, "%s=%d", f.pattern, f.level)
+	}
+	return b.String()
+}
+
+// Get is part of the (Go 1.2)  flag.Getter interface. It always returns nil for this flag type since the
+// struct is not exported.
+func (p *FilepathSpec) Get() interface{} {
+	return nil
+}
+
+var errVpackageSyntax = errors.New("syntax error: expect comma-separated list of regexp=N")
+
+// Syntax: foo/bar=2,foo/bar/.*=1,f*=3
+func (p *FilepathSpec) Set(value string) error {
+	var filter []filepathPat
+	for _, pat := range strings.Split(value, ",") {
+		pattern, v, err := parseFilter(pat)
+		if err != nil {
+			return err
+		}
+		if v == 0 {
+			continue
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return fmt.Errorf("failed to compile %s as an regexp: %s", pattern, err)
+		}
+		// TODO: check syntax of filter?
+		filter = append(filter, filepathPat{re, pattern, Level(v)})
+	}
+	p.filter = filter
+	return nil
+}
+
+// isLiteralGlob reports whether the pattern is a literal string, that is,
+// has no metacharacters that require filepath.Match to be called to match
+// the pattern.
+func isLiteralGlob(pattern string) bool {
 	return !strings.ContainsAny(pattern, `*?[]\`)
 }
 
@@ -428,8 +504,9 @@ type Log struct {
 	traceLocation TraceLocation
 	// These flags are modified only under lock, although verbosity may be fetched
 	// safely using atomic.LoadInt32.
-	vmodule   ModuleSpec // The state of the -vmodule flag.
-	verbosity Level      // V logging level, the value of the -v flag/
+	vmodule   ModuleSpec   // The state of the -vmodule flag.
+	vfilepath FilepathSpec // The state of the -vfilepath flag.
+	verbosity Level        // V logging level, the value of the -v flag/
 
 	// track lines/bytes per severity level
 	stats         Stats
@@ -452,14 +529,14 @@ type Log struct {
 // 1 their caller etc.
 func NewLogger(name string, skip int) *Log {
 	logging := &Log{}
-	logging.setVState(0, nil, false)
+	logging.setVState(0, nil, nil, false)
 	logging.skip = 2 + skip
 	logging.maxStackBufSize = 4096 * 1024
 	logging.name = name
 
 	// Default stderrThreshold is ERROR.
 	logging.stderrThreshold = ErrorLog
-	logging.setVState(0, nil, false)
+	logging.setVState(0, nil, nil, false)
 
 	logging.severityStats[InfoLog] = &logging.stats.Info
 	logging.severityStats[WarningLog] = &logging.stats.Warning
@@ -515,7 +592,15 @@ func (l *Log) SetStderrThreshold(s Severity) {
 func (l *Log) SetVModule(spec ModuleSpec) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.setVState(l.verbosity, spec.filter, true)
+	l.setVState(l.verbosity, spec.filter, nil, true)
+}
+
+// SetModuleSpec sets the comma-separated list of pattern=N settings for
+// file-filtered logging
+func (l *Log) SetVFilepath(spec FilepathSpec) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.setVState(l.verbosity, nil, spec.filter, true)
 }
 
 // SetTaceLocation sets the location, file:N, which when encountered will cause logging to emit a stack trace
@@ -540,23 +625,31 @@ type buffer struct {
 	next *buffer
 }
 
-// setVState sets a consistent state for V logging.
+// setVState sets a consistent state for V logging. A nil value for
+// modules or filepaths will result in that filter not being changed.
 // l.mu is held.
-func (l *Log) setVState(verbosity Level, filter []modulePat, setFilter bool) {
+func (l *Log) setVState(verbosity Level, modules []modulePat, filepaths []filepathPat, setFilter bool) {
 	// Turn verbosity off so V will not fire while we are in transition.
 	l.verbosity.set(0)
 	// Ditto for filter length.
 	atomic.StoreInt32(&l.filterLength, 0)
 
 	// Set the new filters and wipe the pc->Level map if the filter has changed.
+	nfilters := 0
 	if setFilter {
-		l.vmodule.filter = filter
+		if modules != nil {
+			l.vmodule.filter = modules
+		}
+		if filepaths != nil {
+			l.vfilepath.filter = filepaths
+		}
+		nfilters = len(l.vmodule.filter) + len(l.vfilepath.filter)
 		l.vmap = make(map[uintptr]Level)
 	}
 
 	// Things are consistent now, so enable filtering and verbosity.
 	// They are enabled in order opposite to that in V.
-	atomic.StoreInt32(&l.filterLength, int32(len(filter)))
+	atomic.StoreInt32(&l.filterLength, int32(nfilters))
 	l.verbosity.set(verbosity)
 }
 
@@ -963,7 +1056,7 @@ func (l *Log) flushAll() {
 // setV computes and remembers the V level for a given PC
 // when vmodule is enabled.
 // File pattern matching takes the basename of the file, stripped
-// of its .go suffix, and uses filepath.Match, which is a little more
+// of its .go suffix, and uses 270.Match, which is a little more
 // general than the *? matching used in C++.
 // l.mu is held.
 func (l *Log) setV(pc uintptr) Level {
@@ -973,10 +1066,17 @@ func (l *Log) setV(pc uintptr) Level {
 	if strings.HasSuffix(file, ".go") {
 		file = file[:len(file)-3]
 	}
+	module := file
 	if slash := strings.LastIndex(file, "/"); slash >= 0 {
-		file = file[slash+1:]
+		module = file[slash+1:]
 	}
 	for _, filter := range l.vmodule.filter {
+		if filter.match(module) {
+			l.vmap[pc] = filter.level
+			return filter.level
+		}
+	}
+	for _, filter := range l.vfilepath.filter {
 		if filter.match(file) {
 			l.vmap[pc] = filter.level
 			return filter.level

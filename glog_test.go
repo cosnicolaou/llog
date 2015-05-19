@@ -308,6 +308,46 @@ func TestVmoduleGlob(t *testing.T) {
 	}
 }
 
+// vRegexps are patterns that match/don't match this file at V=2.
+var vRegexps = map[string]bool{
+	// Easy to test the numeric match here.
+	"glog_test=1": false, // If -vfilepath sets V to 1, V(2) will fail.
+	"glog_test=2": true,
+	"glog_test=3": true, // If -vfilepath sets V to 1, V(3) will succeed.
+	// These all use 2 and check the patterns. All are true.
+	".*=2":           true,
+	".l.*=2":         true,
+	"...._.*=2":      true,
+	"..[mno]?_.*t=2": true,
+	// These all use 2 and check the patterns. All are false.
+	".*x=2":            false,
+	"m.*=2":            true,
+	".._.*=2":          true,
+	".\\[abc\\]._.*=2": false,
+	"llog/.*=2":        true,
+	"github.com/.*=2":  true,
+}
+
+// Test that vfilepath regexps works as advertised.
+func testVfilepathRegexp(pat string, match bool, t *testing.T) {
+	l := newLogger(t)
+	var spec FilepathSpec
+	if err := spec.Set(pat); err != nil {
+		t.Fatal(err)
+	}
+	l.SetVFilepath(spec)
+	if l.V(2) != match {
+		t.Errorf("incorrect match for %q: got %t expected %t", pat, l.V(2), match)
+	}
+}
+
+// Test that a vfilepath regexps work as advertised.
+func TestVfilepathRegexp(t *testing.T) {
+	for re, match := range vRegexps {
+		testVfilepathRegexp(re, match, t)
+	}
+}
+
 func TestRollover(t *testing.T) {
 	l := newLogger(t)
 	l.swap([numSeverity]flushSyncWriter{nil, nil, nil, nil})
