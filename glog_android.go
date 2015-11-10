@@ -18,10 +18,12 @@ package llog
 
 // #cgo LDFLAGS: -llog
 //
+// #include <stdlib.h>
 // #include <android/log.h>
 import "C"
 
 import (
+	"bytes"
 	"time"
 	"unsafe"
 )
@@ -38,29 +40,19 @@ func (l androidLogger) Flush() error { return nil }
 func (l androidLogger) Sync() error  { return nil }
 func (l androidLogger) Write(p []byte) (int, error) {
 	n := len(p)
-	for len(p) > 0 {
-		p = l.writeOneLine(p)
+	limit := bytes.IndexByte(p, '\n')
+	for limit >= 0 {
+		l.writeOneLine(p[:limit])
+		p = p[limit+1:]
+		limit = bytes.IndexByte(p, '\n')
 	}
+	l.writeOneLine(p)
 	return n, nil
 }
-func (l androidLogger) writeOneLine(p []byte) (remaining []byte) {
-	n := len(p)
-	var tmp byte
-	if n > maxLogSize {
-		n = maxLogSize
-		remaining = p[n:]
-		p = p[:n]
-		tmp = remaining[0]
-	}
-	if p[n-1] != 0 {
-		p = append(p, 0)
-	}
-	C.__android_log_write(l.prio, ctag, (*C.char)(unsafe.Pointer(&p[0])))
-	if remaining != nil {
-		// Restore the byte overwritten in append(p,0)
-		remaining[0] = tmp
-	}
-	return remaining
+func (l androidLogger) writeOneLine(p []byte) {
+	cstr := C.CString(string(p))
+	C.__android_log_write(l.prio, ctag, cstr)
+	C.free(unsafe.Pointer(cstr))
 }
 
 func newFlushSyncWriter(l *Log, s Severity, now time.Time) (flushSyncWriter, error) {
