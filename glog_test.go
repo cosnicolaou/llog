@@ -315,17 +315,17 @@ var vRegexps = map[string]bool{
 	"glog_test=2": true,
 	"glog_test=3": true, // If -vfilepath sets V to 1, V(3) will succeed.
 	// These all use 2 and check the patterns. All are true.
-	".*=2":           true,
-	".l.*=2":         true,
-	"...._.*=2":      true,
-	"..[mno]?_.*t=2": true,
+	".*=2":            true,
+	".l.*=2":          true,
+	"...._.*=2":       true,
+	"..[mno]?_.*t=2":  true,
+	"m.*=2":           true, // needs github.com in the path
+	"github.com/.*=2": true,
+	"llog.*=2":        true, // llog is not always llog/ with go modules
+	".._.*=2":         true,
 	// These all use 2 and check the patterns. All are false.
 	".*x$=2":           false,
-	"m.*=2":            true,
-	".._.*=2":          true,
 	".\\[abc\\]._.*=2": false,
-	"llog/.*=2":        true,
-	"github.com/.*=2":  true,
 }
 
 // Test that vfilepath regexps works as advertised.
@@ -337,6 +337,8 @@ func testVfilepathRegexp(pat string, match bool, t *testing.T) {
 	}
 	l.SetVFilepath(spec)
 	if l.V(2) != match {
+		_, file, _, _ := runtime.Caller(1)
+		t.Logf("current file: %v", file)
 		t.Errorf("incorrect match for %q: got %t expected %t", pat, l.V(2), match)
 	}
 }
